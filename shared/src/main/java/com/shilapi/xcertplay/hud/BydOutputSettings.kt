@@ -150,6 +150,9 @@ object BydOutputSettings {
             BydAmapAdapter.find { installed(context, it) } != null ||
             installed(context, "com.ts.car.someip.service")
 
+    /** Whether the head unit has the FCE vehicle-property service that feeds its cluster's navigation view. */
+    fun fceClusterAvailable(): Boolean = FceClusterBridge.available()
+
     /** Whether the head unit has a BYD navigation receiver or is a BYD head unit, so settings can show navigation/map options. */
     fun available(context: Context): Boolean =
         navigationAvailable(context) ||
