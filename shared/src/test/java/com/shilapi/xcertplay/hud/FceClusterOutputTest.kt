@@ -101,6 +101,29 @@ class FceClusterOutputTest {
     }
 
     @Test
+    fun `standby unlocks the view without touching icon or distance`() {
+        val writer = FakeWriter()
+        val output = FceClusterOutput(writer)
+        output.standby()
+        output.standby()
+        assertEquals(listOf(status to 2), writer.writes)
+        assertTrue(output.active)
+    }
+
+    @Test
+    fun `standby after guidance blanks the arrow and distance but keeps the view`() {
+        val writer = FakeWriter()
+        val output = FceClusterOutput(writer)
+        output.update(FceClusterGuidance(FceClusterIcons.LEFT, 200))
+        writer.writes.clear()
+
+        output.standby()
+        output.update(FceClusterGuidance(FceClusterIcons.RIGHT, 90))
+
+        assertEquals(listOf(icon to 0, distance to 0, icon2 to 0, icon to 20, distance to 90), writer.writes)
+    }
+
+    @Test
     fun `restarts with status 2 after a stop`() {
         val writer = FakeWriter()
         val output = FceClusterOutput(writer)

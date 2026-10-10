@@ -16,10 +16,12 @@ internal object FceClusterBridge {
 
     private val lock = Any()
     private val route = BydHudRouteState()
+    private val navigation = FceNavigationState()
     private var output = FceClusterOutput(FceCarPropertyWriter())
     private var context: Context? = null
     private var tickStarted = false
     private var guidanceLogged = false
+    private var standbyLogged = false
 
     fun available(): Boolean = FceCarPropertyWriter.isAvailable()
 
@@ -37,29 +39,35 @@ internal object FceClusterBridge {
 
     fun onFrame(frame: Iap2Frame) = synchronized(lock) {
         if (context == null) return@synchronized
-        when (route.accept(frame.messageId, frame.payload)) {
-            BydHudRouteChange.GUIDANCE -> sendCurrentLocked()
-            BydHudRouteChange.CLEAR -> output.stop()
-            BydHudRouteChange.NONE -> Unit
-        }
+        route.accept(frame.messageId, frame.payload)
+        navigation.accept(frame.messageId, frame.payload)
+        refreshLocked()
     }
 
     fun clear() = synchronized(lock) {
         route.clear() // The tick must not restore guidance after cleanup.
+        navigation.clear()
         output.stop()
     }
 
-    private fun tick() = synchronized(lock) {
-        // Guidance can expire without a frame (a list that stays empty), and the switch can be
-        // turned off mid-route, so check every second.
-        if (output.active && (route.currentApple() == null || !enabledLocked())) output.stop()
-    }
+    // Guidance can expire without a frame (a list that stays empty), and the switch can be turned
+    // off mid-route, so check every second.
+    private fun tick() = synchronized(lock) { if (context != null) refreshLocked() }
 
     private fun enabledLocked(): Boolean = context?.let(BydOutputSettings::enabled) == true
 
-    private fun sendCurrentLocked() {
+    private fun refreshLocked() {
         if (!enabledLocked()) return output.stop()
-        val apple = route.currentApple() ?: return output.stop()
+        val apple = route.currentApple()
+        if (apple == null) {
+            if (!navigation.active) return output.stop()
+            output.standby()
+            if (!standbyLogged && output.active) {
+                standbyLogged = true
+                Log.i(TAG, "cluster navigation view active without a maneuver")
+            }
+            return
+        }
         val guidance = FceClusterGuidance(
             FceManeuverCodes.icon(apple.type, apple.drivingSide),
             FceManeuverCodes.distance(apple.distanceMeters),
@@ -75,7 +83,9 @@ internal object FceClusterBridge {
     internal fun resetForTest(writer: FcePropertyWriter, appContext: Context?) = synchronized(lock) {
         route.clear()
         output = FceClusterOutput(writer)
+        navigation.clear()
         context = appContext
         guidanceLogged = false
+        standbyLogged = false
     }
 }

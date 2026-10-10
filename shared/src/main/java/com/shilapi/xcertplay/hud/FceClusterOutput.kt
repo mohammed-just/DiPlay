@@ -77,6 +77,27 @@ internal class FceClusterOutput(private val writer: FcePropertyWriter) {
         }
     }
 
+    /**
+     * Navigation is active but there is no maneuver to show (for example a navigation app that
+     * offers no turn-by-turn data): keep the view unlocked and blank any glyph or distance left over.
+     */
+    fun standby() {
+        if (!active) {
+            if (!writer.setInt(FceClusterProperties.NAVI_STATUS, STATUS_NAVIGATING)) return
+            active = true
+            lastIcon = null
+            lastDistance = null
+        }
+        if (lastIcon != null && lastIcon != FceClusterIcons.NONE &&
+            writer.setInt(FceClusterProperties.ICON, FceClusterIcons.NONE)
+        ) {
+            lastIcon = FceClusterIcons.NONE
+        }
+        if (lastDistance != null && lastDistance != 0 && writer.setInt(FceClusterProperties.DISTANCE, 0)) {
+            lastDistance = 0
+        }
+    }
+
     /** The factory end-of-navigation sequence; the cluster keeps the last values otherwise. */
     fun stop() {
         if (!active) return
@@ -97,6 +118,72 @@ internal class FceClusterOutput(private val writer: FcePropertyWriter) {
 
         /** The MCU packs distance into 17 bits. */
         const val MAX_DISTANCE_METERS = 131_071
+    }
+}
+
+/**
+ * Whether the iPhone reports navigation as active, from RouteGuidanceUpdate (0x5201) parameters
+ * that the maneuver decoder does not use: RouteGuidanceState (0x01) and the navigation source name
+ * (0x13). Some navigation apps send only their source name and no maneuvers; the cluster's
+ * navigation view is still unlocked for them. Each update carries only some parameters, so the
+ * last known value of each is kept.
+ */
+internal class FceNavigationState {
+    private var state: Int? = null
+    private var source: String? = null
+
+    val active: Boolean
+        get() = when {
+            source == "" -> false
+            state in ACTIVE_STATES -> true
+            state != null -> false
+            else -> source != null
+        }
+
+    fun accept(messageId: Int, payload: ByteArray) {
+        if (messageId != BydHudRouteState.ROUTE_GUIDANCE_UPDATE || !validTlvs(payload)) return
+        var offset = 0
+        while (offset < payload.size) {
+            val length = u16(payload, offset)
+            val id = u16(payload, offset + 2)
+            val value = offset + 4
+            val valueLength = length - 4
+            when {
+                id == 0x01 && valueLength >= 1 -> state = payload[value].toInt() and 0xff
+                id == 0x13 -> source = utf8(payload, value, valueLength)
+            }
+            offset += length
+        }
+    }
+
+    fun clear() {
+        state = null
+        source = null
+    }
+
+    private fun validTlvs(data: ByteArray): Boolean {
+        var offset = 0
+        while (offset < data.size) {
+            if (offset + 4 > data.size) return false
+            val length = u16(data, offset)
+            if (length < 4 || length > data.size - offset) return false
+            offset += length
+        }
+        return true
+    }
+
+    private fun u16(data: ByteArray, offset: Int): Int =
+        ((data[offset].toInt() and 0xff) shl 8) or (data[offset + 1].toInt() and 0xff)
+
+    private fun utf8(data: ByteArray, offset: Int, length: Int): String {
+        var end = offset
+        while (end < offset + length && data[end] != 0.toByte()) end++
+        return String(data, offset, end - offset, Charsets.UTF_8).trim()
+    }
+
+    private companion object {
+        /** RouteSet, Loading, Locating, Rerouting, ProceedToRoute; 0 NoRouteSet and 2 Arrived end it. */
+        val ACTIVE_STATES = setOf(1, 3, 4, 5, 6)
     }
 }
 

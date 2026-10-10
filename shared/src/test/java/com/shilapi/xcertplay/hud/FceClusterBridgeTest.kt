@@ -86,8 +86,66 @@ class FceClusterBridgeTest {
         writes.clear()
 
         FceClusterBridge.clear()
-        route(state = 1, distance = 80) // no current list: the cleared route must not come back
 
+        assertEquals(listOf(icon to 0, icon2 to 0, distance to 0, status to 1, status to 0), writes)
+    }
+
+    private fun raw(vararg bytes: Int) = FceClusterBridge.onFrame(
+        Iap2Frame(BydHudRouteState.ROUTE_GUIDANCE_UPDATE, ByteArray(bytes.size) { bytes[it].toByte() }),
+    )
+
+    // The two RouteGuidanceUpdate frames an older iPhone sent with Google Maps: a source name and
+    // "no route guidance", never a state or a maneuver.
+    private fun googleMapsSource() = raw(
+        0x00, 0x10, 0x00, 0x13, 'G'.code, 'o'.code, 'o'.code, 'g'.code, 'l'.code, 'e'.code, ' '.code,
+        'M'.code, 'a'.code, 'p'.code, 's'.code, 0x00,
+        0x00, 0x05, 0x00, 0x14, 0x00,
+    )
+
+    private fun emptySource() = raw(0x00, 0x05, 0x00, 0x13, 0x00)
+
+    @Test
+    fun `navigation app without maneuvers unlocks the view without an arrow`() {
+        googleMapsSource()
+        assertEquals(listOf(status to 2), writes)
+    }
+
+    @Test
+    fun `empty source name closes the view`() {
+        googleMapsSource()
+        writes.clear()
+        emptySource()
+        assertEquals(listOf(icon to 0, icon2 to 0, distance to 0, status to 1, status to 0), writes)
+    }
+
+    @Test
+    fun `empty source before any navigation writes nothing`() {
+        emptySource()
+        assertTrue(writes.isEmpty())
+    }
+
+    @Test
+    fun `active route state without a maneuver unlocks the view without an arrow`() {
+        route(state = 1, distance = 0)
+        assertEquals(listOf(status to 2), writes)
+    }
+
+    @Test
+    fun `a route that comes back after session end unlocks the view again`() {
+        maneuver(index = 0, type = 1)
+        route(state = 1, distance = 200, current = 0)
+        FceClusterBridge.clear()
+        writes.clear()
+
+        route(state = 5, distance = 0) // rerouting, maneuvers not resent yet
+        assertEquals(listOf(status to 2), writes)
+    }
+
+    @Test
+    fun `no route set closes the view even with a source name`() {
+        googleMapsSource()
+        writes.clear()
+        route(state = 0, distance = 0)
         assertEquals(listOf(icon to 0, icon2 to 0, distance to 0, status to 1, status to 0), writes)
     }
 
